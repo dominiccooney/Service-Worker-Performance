@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<title>Service Worker Performance Tests</title>
+<template id="childScript">
+<script>
+window.onmessage = function(event) {
+  if (event.data.what == 'start') {
+    start(event.data);
+  }
+}
+
+var done;
+var targetNumRequests;
+var targetNumConcurrentRequests;
+var numTimedRequestsSent;
+var numTimedRequestsFinished;
+var responseTimes;
+
+function start(options) {
+  done = false;
+  targetNumRequests = options.numRequests || 400;
+  targetNumConcurrentRequests = options.numConcurrentRequests;
+  numTimedRequestsSent = 0;
+  numTimedRequestsFinished = 0;
+  responseTimes = [];
+
+  for (var i = 0; i < targetNumConcurrentRequests; i++) {
+    rampRequest();
+  }
+
+  timedRequest();
+}
+
+function sendXhr(xhr) {
+  xhr.timeout = 500;
+  xhr.open('GET', '/request-latency/x', true);
+  xhr.send();
+}
+
+// Used when ramping the load up and down.
+function rampRequest() {
+  var xhr = new XMLHttpRequest();
+  xhr.addEventListener('loadend', next, false);
+  sendXhr(xhr);
+}
+
+function timedRequest() {
+  var xhr = new XMLHttpRequest();
+
+  xhr.addEventListener('load', timedRequestCompleted, false);
+  xhr.addEventListener('error', timedRequestFailed, false);
+  xhr.addEventListener('abort', timedRequestFailed, false);
+
+  xhr.startTime = performance.now();
+  sendXhr(xhr);
+  numTimedRequestsSent++;
+}
+
+function timedRequestCompleted(event) {
+  var endTime = performance.now();
+  responseTimes.push(endTime - event.target.startTime);
+
+  numTimedRequestsFinished++;
+  next();
+}
+
+function timedRequestFailed(event) {
+  numTimedRequestsFinished++;
+  next();
+}
+
+function next() {
+  // Ramp-down requests finishing.
+  if (done) {
+    return;
+  }
+
+  // All timed requests have finished.
+  if (numTimedRequestsFinished == targetNumRequests) {
+    done = true;
+    computeResults();
+    return;
+  }
+
+  // All timed requests have started, ramping down.
+  if (numTimedRequestsSent == targetNumRequests) {
+    rampRequest();
+    return;
+  }
+
+  // Still generating timed requests.
+  timedRequest();
+}
+
+function computeResults() {
+  var results = {};
+  results['concurrent_' + targetNumConcurrentRequests + '_failed_requests'] = {
+    value: numTimedRequestsSent - responseTimes.length,
+    units: 'requests'
+  };
+  responseTimes.sort();
+  reportPercentile(50);
+  reportPercentile(90);
+  reportPercentile(99);
+  complete(results);
+
+  // Gets the n-th percentile response time, or ten seconds if that response did
+  // not succeed.
+  function percentile(n) {
+    var i = Math.floor(n * numTimedRequestsSent / 100);
+    if (i >= responseTimes.length) {
+      return 10 * 1000;
+    }
+    return responseTimes[i];
+  }
+
+  function reportPercentile(n) {
+    results['concurrent_' + targetNumConcurrentRequests + '_response_' + n + '_percentile'] = {
+      value: percentile(n),
+      units: 'msec'
+    };
+  }
+}
+
+function complete(results) {
+  var message = {
+    what: 'done',
+    results: results
+  };
+  window.parent.postMessage(message, '*');
+}
+</script>
+</template>
+<body>
+<script>
+function setUpFrame(path) {
+  return function() {
+    return new Promise(function(resolve, _) {
+      // FIXME(dominicc): Investigate how Android/Telemetry produces
+      // 404s when reloading and remove this timeout which hackily
+      // makes it go.
+      setTimeout(function() {
+        var frame = document.createElement('iframe');
+
+        frame.onload = function() {
+          frame.contentDocument.body.appendChild(
+              frame.contentDocument.importNode(
+                  document.querySelector('#childScript').content, true));
+          resolve(frame);
+        };
+
+        frame.src = path;
+        document.body.appendChild(frame);
+      }, 1000);
+    });
+  };
+}
+
+function testRequestLatency(numConcurrentRequests) {
+  return function(frame) {
+    return new Promise(function(resolve, _) {
+      window.addEventListener('message', message);
+
+      function message(event) {
+        if (event.data.what == 'done') {
+          window.removeEventListener('message', message);
+          addResults(event.data.results);
+          resolve(frame);
+        }
+      }
+
+      var message = {
+        what: 'start',
+        numConcurrentRequests: numConcurrentRequests
+      };
+      frame.contentWindow.postMessage(message, '*');
+    });
+  };
+}
+
+function addResults(partial) {
+  for (key in partial) {
+    if (partial.hasOwnProperty(key)) {
+      results[key] = partial[key];
+    }
+  }
+}
+
+function cleanUp(frame) {
+  frame.remove();
+  return navigator.serviceWorker.unregister(workerScriptPath, workerOptions);
+}
+
+function complete() {
+  console.log('complete');
+  console.log(results);
+
+  done = true;
+}
+
+done = false;
+results = { };
+
+var workerScriptPath = 'request-latency-worker.js';
+var workerOptions = { scope: '/request-latency/*' };
+
+navigator.serviceWorker.register(workerScriptPath, workerOptions)
+  .then(setUpFrame('/request-latency/blank'))
+  .then(testRequestLatency(1))
+  .then(testRequestLatency(10))
+  .then(testRequestLatency(100))
+  .then(cleanUp)
+  .then(complete);
+</script>
