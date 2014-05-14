@@ -132,25 +132,37 @@ function complete(results) {
 </template>
 <body>
 <script>
+function waitUntilActive(serviceWorker) {
+  return new Promise(function(resolve, reject) {
+    serviceWorker.addEventListener('statechange', checkState);
+    checkState();
+
+    function checkState() {
+      if (serviceWorker.state == 'active') {
+        serviceWorker.removeEventListener('statechange', checkState);
+        resolve(serviceWorker);
+      } else if (serviceWorker.state == 'deactivating') {
+        serviceWorker.removeEventListener('statechange', checkState);
+        reject('ServiceWorker did not become active');
+      }
+    }
+  });
+}
+
 function setUpFrame(path) {
   return function() {
     return new Promise(function(resolve, _) {
-      // FIXME(dominicc): Investigate how Android/Telemetry produces
-      // 404s when reloading and remove this timeout which hackily
-      // makes it go.
-      setTimeout(function() {
-        var frame = document.createElement('iframe');
+      var frame = document.createElement('iframe');
 
-        frame.onload = function() {
-          frame.contentDocument.body.appendChild(
-              frame.contentDocument.importNode(
-                  document.querySelector('#childScript').content, true));
-          resolve(frame);
-        };
+      frame.onload = function() {
+        frame.contentDocument.body.appendChild(
+            frame.contentDocument.importNode(
+                document.querySelector('#childScript').content, true));
+        resolve(frame);
+      };
 
-        frame.src = path;
-        document.body.appendChild(frame);
-      }, 1000);
+      frame.src = path;
+      document.body.appendChild(frame);
     });
   };
 }
@@ -204,6 +216,7 @@ var workerScriptPath = 'request-latency-worker.js';
 var workerOptions = { scope: '/request-latency/*' };
 
 navigator.serviceWorker.register(workerScriptPath, workerOptions)
+  .then(waitUntilActive)
   .then(setUpFrame('/request-latency/blank'))
   .then(testRequestLatency(1))
   .then(testRequestLatency(10))
