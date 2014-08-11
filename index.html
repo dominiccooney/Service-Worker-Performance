@@ -138,12 +138,12 @@ function waitUntilActive(serviceWorker) {
     checkState();
 
     function checkState() {
-      if (serviceWorker.state == 'active') {
+      if (serviceWorker.state == 'activated') {
         serviceWorker.removeEventListener('statechange', checkState);
         resolve(serviceWorker);
-      } else if (serviceWorker.state == 'deactivating') {
+      } else if (serviceWorker.state == 'redundant') {
         serviceWorker.removeEventListener('statechange', checkState);
-        reject('ServiceWorker did not become active');
+        reject('ServiceWorker did not become activated');
       }
     }
   });
@@ -213,7 +213,7 @@ done = false;
 results = { };
 
 var workerScriptPath = 'request-latency-worker.js';
-var workerOptions = { scope: '/request-latency/*' };
+var workerOptions = { scope: '/request-latency/' };
 
 navigator.serviceWorker.register(workerScriptPath, workerOptions)
   .then(waitUntilActive)
