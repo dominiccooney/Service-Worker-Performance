@@ -132,20 +132,30 @@ function complete(results) {
 </template>
 <body>
 <script>
-function waitUntilActive(serviceWorker) {
-  return new Promise(function(resolve, reject) {
-    serviceWorker.addEventListener('statechange', checkState);
-    checkState();
+function waitUntilActive(registration) {
+  return new Promise(function(resolve) {
+    // FIXME remove this after getRegistration be implemented.
+    newRegistration = registration;
+    // FIXME installing will be set before 'updatefound' event.
+    registration.addEventListener('updatefound', function() {
+      resolve(registration.installing);
+    });
+  })
+  .then(function(serviceWorker) {
+    return new Promise(function(resolve, reject) {
+      serviceWorker.addEventListener('statechange', checkState);
+      checkState();
 
-    function checkState() {
-      if (serviceWorker.state == 'active') {
-        serviceWorker.removeEventListener('statechange', checkState);
-        resolve(serviceWorker);
-      } else if (serviceWorker.state == 'deactivating') {
-        serviceWorker.removeEventListener('statechange', checkState);
-        reject('ServiceWorker did not become active');
+      function checkState() {
+        if (serviceWorker.state == 'activated') {
+          serviceWorker.removeEventListener('statechange', checkState);
+          resolve(serviceWorker);
+        } else if (serviceWorker.state == 'redundant') {
+          serviceWorker.removeEventListener('statechange', checkState);
+          reject('ServiceWorker did not become activated');
+        }
       }
-    }
+    });
   });
 }
 
@@ -199,7 +209,7 @@ function addResults(partial) {
 
 function cleanUp(frame) {
   frame.remove();
-  return navigator.serviceWorker.unregister(workerScriptPath, workerOptions);
+  return newRegistration.unregister();
 }
 
 function complete() {
@@ -213,7 +223,7 @@ done = false;
 results = { };
 
 var workerScriptPath = 'request-latency-worker.js';
-var workerOptions = { scope: '/request-latency/*' };
+var workerOptions = { scope: '/request-latency/' };
 
 navigator.serviceWorker.register(workerScriptPath, workerOptions)
   .then(waitUntilActive)
@@ -222,5 +232,6 @@ navigator.serviceWorker.register(workerScriptPath, workerOptions)
   .then(testRequestLatency(10))
   .then(testRequestLatency(100))
   .then(cleanUp)
-  .then(complete);
+  .then(complete)
+  .catch(function(e) { console.error(e); });
 </script>
