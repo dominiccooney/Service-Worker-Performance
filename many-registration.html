@@ -35,22 +35,27 @@ function registerMultipleTimesInDifferentScope(min, max) {
 function unregisterMultipleTimesInDifferentScope(min, max) {
   var n = min;
   if (min >= max) {
-    return;
+    return new Promise(function(resolve, _) { resolve() });
   }
   var scope = '/many-registration/' + String(n).lpad('0', 4);
-  navigator.serviceWorker.getRegistration(scope)
+  return new Promise(function(resolve, _) {
+    var beginTiming = performance.now();
+    navigator.serviceWorker.getRegistration(scope)
       .then(function(registration) {
         var r;
         if (registration) {
           r = registration.unregister();
         }
-        unregisterMultipleTimesInDifferentScope(min + 1, max);
         return r;
       }).then(function(result) {
+        var endTiming = performance.now();
+        responseTimings.push(endTiming - beginTiming);
+        unregisterMultipleTimesInDifferentScope(min + 1, max).then(resolve);
         console.log(':)', result, scope);
       }).catch(function(err) {
         console.log('orz', err);
       });
+  });
 }
 
 function register(n) {
@@ -58,8 +63,21 @@ function register(n) {
   if ('serviceWorker' in navigator) {
     return new Promise(function(resolve, _) {
       registerMultipleTimesInDifferentScope(0, n).then(function() {
-        unregisterMultipleTimesInDifferentScope(0, n);
-        recordResponseTiming(n);
+        recordResponseTiming('registration', n);
+        resolve();
+      });
+    });
+  } else {
+    alert('ServiceWorker is not supported in your browser!');
+  }
+}
+
+function unregister(n) {
+  responseTimings = [];
+  if ('serviceWorker' in navigator) {
+    return new Promise(function(resolve, _) {
+      unregisterMultipleTimesInDifferentScope(0, n).then(function() {
+        recordResponseTiming('unregistration', n);
         resolve();
       });
     });
@@ -69,14 +87,17 @@ function register(n) {
 }
 
 function start() {
-  register(40).then(function() {
-    complete();
-  });
+  register(40)
+      .then(function() {
+        return unregister(40);
+      }).then(function() {
+        complete();
+      });
 }
 
 var results = {};
 var done = false;
-function recordResponseTiming(n) {
+function recordResponseTiming(prefix, n) {
   responseTimings.sort();
   reportPercentile(50);
   reportPercentile(90);
@@ -89,7 +110,7 @@ function recordResponseTiming(n) {
     return responseTimings[i];
   }
   function reportPercentile(percent) {
-    results['registration_' + percent + '_percentile'] = {
+    results[prefix + '_' + percent + '_percentile'] = {
       value: percentile(percent),
       units: 'msec'
     };
