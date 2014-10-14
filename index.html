@@ -116,7 +116,7 @@ function computeResults() {
   function reportPercentile(n) {
     results['concurrent_' + targetNumConcurrentRequests + '_response_' + n + '_percentile'] = {
       value: percentile(n),
-      units: 'msec'
+      units: 'ms'
     };
   }
 }
