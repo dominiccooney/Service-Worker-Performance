@@ -116,7 +116,7 @@ function computeResults() {
   function reportPercentile(n) {
     results['concurrent_' + targetNumConcurrentRequests + '_response_' + n + '_percentile'] = {
       value: percentile(n),
-      units: 'msec'
+      units: 'ms'
     };
   }
 }
@@ -132,18 +132,23 @@ function complete(results) {
 </template>
 <body>
 <script>
-function waitUntilActive(serviceWorker) {
+function waitUntilActive(registration) {
   return new Promise(function(resolve, reject) {
-    serviceWorker.addEventListener('statechange', checkState);
-    checkState();
+    var serviceWorker;
+    if (registration.active) {
+      resolve(registration.active);
+    } else if (registration.waiting) {
+      serviceWorker = registration.waiting;
+      serviceWorker.onstatechange = checkState;
+    } else {
+      serviceWorker = registration.installing;
+      serviceWorker.onstatechange = checkState;
+    }
 
     function checkState() {
-      if (serviceWorker.state == 'active') {
+      if (serviceWorker.state == 'activated') {
         serviceWorker.removeEventListener('statechange', checkState);
         resolve(serviceWorker);
-      } else if (serviceWorker.state == 'deactivating') {
-        serviceWorker.removeEventListener('statechange', checkState);
-        reject('ServiceWorker did not become active');
       }
     }
   });
@@ -199,7 +204,10 @@ function addResults(partial) {
 
 function cleanUp(frame) {
   frame.remove();
-  return navigator.serviceWorker.unregister(workerScriptPath, workerOptions);
+  return navigator.serviceWorker.getRegistration(workerOptions['scope'])
+      .then(function(r) {
+          return r.unregister();
+      });
 }
 
 function complete() {
@@ -213,7 +221,7 @@ done = false;
 results = { };
 
 var workerScriptPath = 'request-latency-worker.js';
-var workerOptions = { scope: '/request-latency/*' };
+var workerOptions = { scope: '/request-latency/' };
 
 navigator.serviceWorker.register(workerScriptPath, workerOptions)
   .then(waitUntilActive)
