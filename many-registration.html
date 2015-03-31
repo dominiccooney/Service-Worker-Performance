@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<title>Service Worker Registration Tests</title>
+<script type="text/javascript">
+String.prototype.lpad = function(padString, length) {
+    var str = this;
+    while (str.length < length)
+        str = padString + str;
+    return str;
+};
+
+var responseTimings;
+// Register [min, max)
+function registerMultipleTimesInDifferentScope(min, max) {
+  var n = min;
+  if (min >= max) {
+    return new Promise(function(resolve, _) { resolve(); });
+  }
+  var scope = '/many-registration/' + String(n).lpad('0', 4);
+  return new Promise(function(resolve, _) {
+    var beginTiming = performance.now();
+    navigator.serviceWorker.register('request-latency-worker.js',
+                                     {scope: scope})
+      .then(function(reg) {
+        var endTiming = performance.now();
+        responseTimings.push(endTiming - beginTiming);
+        console.log(':)', reg);
+        registerMultipleTimesInDifferentScope(min + 1, max).then(resolve);
+      }).catch(function(err) {
+        console.log('orz', err);
+      });
+  });
+}
+
+// Unregister [min, max)
+function unregisterMultipleTimesInDifferentScope(min, max) {
+  var n = min;
+  if (min >= max) {
+    return new Promise(function(resolve, _) { resolve() });
+  }
+  var scope = '/many-registration/' + String(n).lpad('0', 4);
+  return new Promise(function(resolve, _) {
+    var beginTiming = performance.now();
+    navigator.serviceWorker.getRegistration(scope)
+      .then(function(registration) {
+        var r;
+        if (registration) {
+          r = registration.unregister();
+        }
+        return r;
+      }).then(function(result) {
+        var endTiming = performance.now();
+        responseTimings.push(endTiming - beginTiming);
+        unregisterMultipleTimesInDifferentScope(min + 1, max).then(resolve);
+        console.log(':)', result, scope);
+      }).catch(function(err) {
+        console.log('orz', err);
+      });
+  });
+}
+
+function register(n) {
+  responseTimings = [];
+  if ('serviceWorker' in navigator) {
+    return new Promise(function(resolve, _) {
+      registerMultipleTimesInDifferentScope(0, n).then(function() {
+        recordResponseTiming('registration', n);
+        resolve();
+      });
+    });
+  } else {
+    alert('ServiceWorker is not supported in your browser!');
+  }
+}
+
+function unregister(n) {
+  responseTimings = [];
+  if ('serviceWorker' in navigator) {
+    return new Promise(function(resolve, _) {
+      unregisterMultipleTimesInDifferentScope(0, n).then(function() {
+        recordResponseTiming('unregistration', n);
+        resolve();
+      });
+    });
+  } else {
+    alert('ServiceWorker is not supported in your browser!');
+  }
+}
+
+function start() {
+  register(40)
+      .then(function() {
+        return unregister(40);
+      }).then(function() {
+        complete();
+      });
+}
+
+var results = {};
+var done = false;
+function recordResponseTiming(prefix, n) {
+  responseTimings.sort();
+  reportPercentile(50);
+  reportPercentile(90);
+  reportPercentile(99);
+  function percentile(percent) {
+    var i = Math.floor(percent * n / 100);
+    if (i >= responseTimings.length) {
+      return 10 * 1000;
+    }
+    return responseTimings[i];
+  }
+  function reportPercentile(percent) {
+    results[prefix + '_' + percent + '_percentile'] = {
+      value: percentile(percent),
+      units: 'msec'
+    };
+  }
+}
+
+function complete() {
+  done = true;
+  var status = document.getElementById('status');
+  status.innerHTML = 'Completed!';
+}
+</script>
+<body onload="start()">
+<div id="status">Loading...</div>
+</body>
